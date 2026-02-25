@@ -160,8 +160,27 @@ def is_duplicate(info, existing_names, existing_emails, existing_phones):
 
 
 def escape_applescript(s):
-    """Escape a string for AppleScript."""
-    return s.replace("\\", "\\\\").replace('"', '\\"')
+    """Escape a string for use inside AppleScript double-quoted literals.
+
+    Handles backslashes, double quotes, and strips control characters
+    (tabs, newlines, carriage returns, null bytes) that could break out
+    of the string context or corrupt the AppleScript source.
+    """
+    s = s.replace("\\", "\\\\")
+    s = s.replace('"', '\\"')
+    s = s.replace("\t", " ")
+    s = s.replace("\n", " ")
+    s = s.replace("\r", " ")
+    s = s.replace("\x00", "")
+    return s
+
+
+def sanitize_group_name(name):
+    """Validate and sanitize a Contacts group name."""
+    name = name.strip()
+    if not name:
+        raise ValueError("Group name cannot be empty")
+    return escape_applescript(name)
 
 
 def build_contact_applescript(info):
@@ -209,12 +228,13 @@ def build_contact_applescript(info):
 
 def ensure_group_exists(group_name):
     """Create the Contacts.app group if it doesn't exist."""
+    safe_name = sanitize_group_name(group_name)
     script = f'''
     tell application "Contacts"
         try
-            set gmGroup to group "{group_name}"
+            set gmGroup to group "{safe_name}"
         on error
-            set gmGroup to make new group with properties {{name:"{group_name}"}}
+            set gmGroup to make new group with properties {{name:"{safe_name}"}}
             save
         end try
         return name of gmGroup
@@ -235,9 +255,10 @@ def reassign_group(group_name):
     Works around a Contacts.app bug where group assignment in the same
     AppleScript call as contact creation doesn't persist.
     """
+    safe_name = sanitize_group_name(group_name)
     script = f'''
     tell application "Contacts"
-        set gmGroup to group "{group_name}"
+        set gmGroup to group "{safe_name}"
         set recentPeople to every person whose creation date > (current date) - 1 * hours
         set addCount to 0
         repeat with p in recentPeople
@@ -308,6 +329,7 @@ def main():
             print(f"  + {info['fn']}")
         return
 
+    safe_group = sanitize_group_name(args.group)
     ensure_group_exists(args.group)
 
     print(f"\nImporting {len(to_import)} contacts into '{args.group}'...")
@@ -329,7 +351,7 @@ def main():
         contacts_code = "\n        ".join(contact_blocks)
         script = f'''
 tell application "Contacts"
-    set gmGroup to group "{args.group}"
+    set gmGroup to group "{safe_group}"
     try
         {contacts_code}
         save
@@ -357,7 +379,7 @@ end tell
                     continue
                 single = f'''
 tell application "Contacts"
-    set gmGroup to group "{args.group}"
+    set gmGroup to group "{safe_group}"
     try
         {block}
         save
